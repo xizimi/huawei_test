@@ -3,7 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define EPS 1e-6
+#define  EPS 1e-6
 
 typedef struct {
     double x, y;

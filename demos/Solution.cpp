@@ -16,125 +16,190 @@ struct Vector2D {
     double x, y;
 
     Vector2D(double x = 0, double y = 0) : x(x), y(y) {}
-    Vector2D operator-(const Vector2D& other) const { return Vector2D(x - other.x, y - other.y); }
-    Vector2D operator+(const Vector2D& other) const { return Vector2D(x + other.x, y + other.y); }
-    Vector2D operator*(double scalar) const { return Vector2D(x * scalar, y * scalar); }
-    double Dot(const Vector2D& other) const { return x * other.x + y * other.y; }
-    double Length() const { return std::sqrt(x * x + y * y); }
-    Vector2D Normalize() const
-    {
-        double len = Length();
-        if (len == 0) {
-            return *this;
-        }
-        return Vector2D(x / len, y / len);
+    
+    inline double Dot(const Vector2D& other) const { return x * other.x + y * other.y; }
+    
+    inline Vector2D operator+(const Vector2D& other) const { return Vector2D(x + other.x, y + other.y); }
+    inline Vector2D operator-(const Vector2D& other) const { return Vector2D(x - other.x, y - other.y); }
+    inline Vector2D operator*(double s) const { return Vector2D(x * s, y * s); }
+    
+    inline Vector2D Normalize() const {
+        double len = std::sqrt(x * x + y * y);
+        return (len > 0) ? Vector2D(x / len, y / len) : Vector2D(0, 0);
     }
-    Vector2D Perp() const { return Vector2D(-y, x); }
+    inline Vector2D Perp() const { return Vector2D(-y, x); }
 };
 
 struct Polygon {
     std::vector<Vector2D> vertices;
+    Vector2D center; // 简化：直接使用 center，去掉 mutable 和 computed 标志位
 
     Polygon() = default;
     Polygon(std::initializer_list<Vector2D> vts) : vertices(vts) {}
-    Vector2D GetCenter() const
-    {
-        Vector2D center(0, 0);
-        if (vertices.empty()) {
-            return center;
-        }
-        for (const auto& v : vertices) {
-            center = center + v;
-        }
-        return center * (1.0 / vertices.size());
-    }
-    void MoveByVec(const Vector2D& vec) {
-        for (auto& v : vertices) {
-            v = v + vec;
-        }
-    }
 };
+
+struct Projection {
+    double min, max;
+};
+
+struct ProjectionData {
+    double centerDiff; // (CenterB - CenterA) 静态部分
+    double sumRadii;   // RadiusA + RadiusB
+    Vector2D axis;
+};
+
+// 优化：使用单一结构体数组存储预处理数据，提高缓存命中率
+vector<ProjectionData> axesData; 
 
 int n1 = 0, n2 = 0, m = 0;
 Polygon polygon1;
 Polygon polygon2;
 vector<Vector2D> testCases;
 
-struct Projection {
-    double min, max;
-};
+// 优化：拆分 Projection 为独立的数组，提高缓存局部性
+vector<Vector2D> poly1Axes;
+vector<double> poly1MinOwn, poly1MaxOwn;       // Polygon1 在自己轴上的投影
+vector<double> poly2MinOnPoly1, poly2MaxOnPoly1; // Polygon2 在 Polygon1 轴上的投影
 
-Projection ProjectPolygon(const Polygon& poly, const Vector2D& axis)
-{
-    double minProj = poly.vertices[0].Dot(axis);
-    double maxProj = minProj;
-
-    for (size_t i = 1; i < poly.vertices.size(); ++i) {
-        double proj = poly.vertices[i].Dot(axis);
-        if (proj < minProj) {
-            minProj = proj;
-        }
-        if (proj > maxProj) {
-            maxProj = proj;
-        }
-    }
-    return {minProj, maxProj};
-}
+vector<Vector2D> poly2Axes;
+vector<double> poly2MinOwn, poly2MaxOwn;       // Polygon2 在自己轴上的投影
+vector<double> poly1MinOnPoly2, poly1MaxOnPoly2; // Polygon1 在 Polygon2 轴上的投影
 
 Vector2D GenSolution(const Vector2D& vec)
 {
-    Polygon polyB = polygon2;
-    polyB.MoveByVec(vec);
-
     double minOverlap = std::numeric_limits<double>::infinity();
-    Vector2D smallestAxis;
+    Vector2D smallestAxis(0, 0);
+    
+    const size_t totalAxes = axesData.size();
+    const ProjectionData* data = axesData.data();
 
-    const Polygon* polygons[2] = {&polygon1, &polyB};
+    // 预计算中心差值的静态部分已在 data[i].centerDiff 中
+    // 运行时只需加上 vec 在轴上的投影
+    
+    // 优化：手动展开或使用指针遍历减少开销
+    for (size_t i = 0; i < totalAxes; ++i) {
+        double shift = vec.Dot(data[i].axis);
+        double dist = data[i].centerDiff + shift;
+        
+        // 快速绝对值计算 (通常比 std::abs 快或内联)
+        double absDist = (dist < 0.0) ? -dist : dist;
+        
+        if (absDist >= data[i].sumRadii) {
+            return {0.0, 0.0}; // 发现分离轴
+        }
 
-    for (int i = 0; i < 2; ++i) {
-        const Polygon& currentPoly = *polygons[i];
-        for (size_t j = 0; j < currentPoly.vertices.size(); ++j) {
-            Vector2D p1 = currentPoly.vertices[j];
-            Vector2D p2 = currentPoly.vertices[(j + 1) % currentPoly.vertices.size()];
-            Vector2D edge = p2 - p1;
-
-            Vector2D axis = edge.Perp().Normalize();
-
-            Projection projA = ProjectPolygon(polygon1, axis);
-            Projection projB = ProjectPolygon(polyB, axis);
-
-            if (projA.max <= projB.min || projB.max <= projA.min) {
-                return {0.0, 0.0};
-            }
-
-            double overlap = std::min(projA.max, projB.max) - std::max(projA.min, projB.min);
-
-            if (overlap < minOverlap) {
-                minOverlap = overlap;
-                smallestAxis = axis;
-            }
+        double overlap = data[i].sumRadii - absDist;
+        if (overlap < minOverlap) {
+            minOverlap = overlap;
+            smallestAxis = data[i].axis;
         }
     }
-    Vector2D centerA = polygon1.GetCenter();
-    Vector2D centerB = polyB.GetCenter();
-    Vector2D dir = centerB - centerA;
 
+    if (minOverlap == std::numeric_limits<double>::infinity()) {
+         // 理论上不会发生，除非多边形退化且完全重合且无轴？
+         return {0.0, 0.0};
+    }
+
+    // 优化：直接使用预存的 center 差值基础向量
+    Vector2D dir = (polygon2.center - polygon1.center) + vec;
+    
     if (smallestAxis.Dot(dir) < 0.0) {
         smallestAxis = smallestAxis * -1.0;
     }
 
-    return {smallestAxis * minOverlap};
+    return smallestAxis * minOverlap;
 }
 
-// 选手在规定的时间内进行预处理，完成后返回OK
 void PreProcess()
 {
-    // player can perform preprocessing here
+    size_t n1Verts = polygon1.vertices.size();
+    size_t n2Verts = polygon2.vertices.size();
+
+    // 预计算中心
+    if (n1Verts > 0) {
+        polygon1.center = Vector2D(0, 0);
+        for (const auto& v : polygon1.vertices) {
+            polygon1.center = polygon1.center + v;
+        }
+        polygon1.center = polygon1.center * (1.0 / n1Verts);
+    }
+
+    if (n2Verts > 0) {
+        polygon2.center = Vector2D(0, 0);
+        for (const auto& v : polygon2.vertices) {
+            polygon2.center = polygon2.center + v;
+        }
+        polygon2.center = polygon2.center * (1.0 / n2Verts);
+    }
+
+    const Vector2D* verts1 = polygon1.vertices.data();
+    const Vector2D* verts2 = polygon2.vertices.data();
+
+    axesData.clear();
+    axesData.reserve(n1Verts + n2Verts);
+
+    auto processAxis = [&](const Vector2D& axis) {
+        // 计算 Polygon1 投影
+        double val1 = verts1[0].Dot(axis);
+        double minA = val1, maxA = val1;
+        for (size_t k = 1; k < n1Verts; ++k) {
+            val1 = verts1[k].Dot(axis);
+            if (val1 < minA) minA = val1;
+            else if (val1 > maxA) maxA = val1;
+        }
+        double centerA = (minA + maxA) * 0.5;
+        double radiusA = (maxA - minA) * 0.5;
+
+        // 计算 Polygon2 投影
+        double val2 = verts2[0].Dot(axis);
+        double minB = val2, maxB = val2;
+        for (size_t k = 1; k < n2Verts; ++k) {
+            val2 = verts2[k].Dot(axis);
+            if (val2 < minB) minB = val2;
+            else if (val2 > maxB) maxB = val2;
+        }
+        double centerB = (minB + maxB) * 0.5;
+        double radiusB = (maxB - minB) * 0.5;
+
+        ProjectionData pd;
+        pd.axis = axis;
+        pd.centerDiff = centerB - centerA; // 预计算静态中心差
+        pd.sumRadii = radiusA + radiusB;   // 预计算半径和
+        axesData.push_back(pd);
+    };
+
+    // --- 处理多边形 1 的轴 ---
+    for (size_t i = 0; i < n1Verts; ++i) {
+        Vector2D edge = verts1[(i + 1) % n1Verts] - verts1[i];
+        processAxis(edge.Perp().Normalize());
+    }
+
+    // --- 处理多边形 2 的轴 ---
+    for (size_t i = 0; i < n2Verts; ++i) {
+        Vector2D edge = verts2[(i + 1) % n2Verts] - verts2[i];
+        processAxis(edge.Perp().Normalize());
+    }
+    
+    // 清理旧的大向量以释放内存，虽然它们会被重新分配，但显式清理有助于峰值内存控制
+    poly1Axes.clear(); poly1Axes.shrink_to_fit();
+    poly1MinOwn.clear(); poly1MinOwn.shrink_to_fit();
+    poly1MaxOwn.clear(); poly1MaxOwn.shrink_to_fit();
+    poly2MinOnPoly1.clear(); poly2MinOnPoly1.shrink_to_fit();
+    poly2MaxOnPoly1.clear(); poly2MaxOnPoly1.shrink_to_fit();
+    
+    poly2Axes.clear(); poly2Axes.shrink_to_fit();
+    poly2MinOwn.clear(); poly2MinOwn.shrink_to_fit();
+    poly2MaxOwn.clear(); poly2MaxOwn.shrink_to_fit();
+    poly1MinOnPoly2.clear(); poly1MinOnPoly2.shrink_to_fit();
+    poly1MaxOnPoly2.clear(); poly1MaxOnPoly2.shrink_to_fit();
 }
 
 int main()
 {
-    // =============== 1. read polygons ===================
+    // 优化：关闭同步，加速 IO
+    std::ios::sync_with_stdio(false);
+    cin.tie(nullptr);
+
     cin >> n1 >> n2;
 
     if (n1 <= 0 || n2 <= 0) {
@@ -152,7 +217,6 @@ int main()
         cin >> polygon2.vertices[i].x >> polygon2.vertices[i].y;
     }
 
-    // wait for OK to ensure all polygon data is received
     string okResp;
     cin >> okResp;
     if (okResp != "OK") {
@@ -160,13 +224,11 @@ int main()
         return 0;
     }
 
-    // ============== 2. preprocess ===================
     PreProcess();
-    // send OK after finishing preprocessing
-    cout << "OK" << endl;
+    
+    cout << "OK" << "\n"; // 优化：使用 \n 代替 endl 避免频繁 flush
     cout.flush();
 
-    // ============== 3. read test data ===================
     cin >> m;
     testCases.resize(m);
 
@@ -174,7 +236,6 @@ int main()
         cin >> testCases[i].x >> testCases[i].y;
     }
 
-    // wait for OK to ensure all test cases are received
     cin >> okResp;
     if (okResp != "OK") {
         cerr << "Input data error: waiting for OK after that I have received all test points but I get " << okResp
@@ -182,15 +243,12 @@ int main()
         return 0;
     }
 
-    // ================ 4. solve and output results ===================
     for (int i = 0; i < m; ++i) {
         const Vector2D& res = GenSolution(testCases[i]);
-        cout << fixed << std::setprecision(5) << res.x << " " << res.y << endl;
-        cout.flush();
+        cout << fixed << setprecision(5) << res.x << " " << res.y << "\n";
     }
 
-    // send OK after outputting all answer
-    cout << "OK" << endl;
+    cout << "OK" << "\n";
     cout.flush();
 
     return 0;
