@@ -1,0 +1,15 @@
+选手作品编译完成
+Begin running ...
+[INFO]Interactor.cpp:143|main|send polygon data to player
+[INFO]Interactor.cpp:160|main|send OK to player in order to inform player that the polygon data has been sent.
+[INFO]Interactor.cpp:165|main|wait for player's OK after player has already finished preprocessing (time limit: 1000000000 ns).
+[INFO]Interactor.cpp:175|main|player preprocessing finished, response: OK
+[INFO]Interactor.cpp:184|main|send test point to player.
+[INFO]Interactor.cpp:195|main|send OK to player in order to inform player that all the test samples have been sent.
+[INFO]Interactor.cpp:200|main|wait for player's output of test samples (time limit: 600000000000 ns).
+[INFO]Interactor.cpp:228|main|system has received all test points' answer.
+[INFO]Interactor.cpp:229|main|total time 11558968 ns.
+ok Finish evaluation!
+Interactor exit status: 0
+solution exit status: 0
+Finish process
