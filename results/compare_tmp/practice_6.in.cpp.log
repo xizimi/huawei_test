@@ -1,3 +1,25 @@
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp: In function ‘int main()’:
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:440:10: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  440 |     scanf("%d%d", &n1, &n2);
+      |     ~~~~~^~~~~~~~~~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:444:14: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  444 |         scanf("%lf%lf", &A_raw[2*i], &A_raw[2*i+1]);
+      |         ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:447:14: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  447 |         scanf("%lf%lf", &B_raw[2*i], &B_raw[2*i+1]);
+      |         ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:451:10: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  451 |     scanf("%s", ok);
+      |     ~~~~~^~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:458:10: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  458 |     scanf("%d", &m);
+      |     ~~~~~^~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:462:14: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  462 |         scanf("%lf%lf", &testX[i], &testY[i]);
+      |         ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/zhaobowen/project/c++_project/Linux//demos/Solution.cpp:464:10: warning: ignoring return value of ‘int scanf(const char*, ...)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  464 |     scanf("%s", ok);
+      |     ~~~~~^~~~~~~~~~
 选手作品编译完成
 Begin running ...
 [INFO]Interactor.cpp:143|main|send polygon data to player
@@ -8,7 +30,7 @@ Begin running ...
 [INFO]Interactor.cpp:195|main|send OK to player in order to inform player that all the test samples have been sent.
 [INFO]Interactor.cpp:200|main|wait for player's output of test samples (time limit: 600000000000 ns).
 [INFO]Interactor.cpp:228|main|system has received all test points' answer.
-[INFO]Interactor.cpp:229|main|total time 6418827302 ns.
+[INFO]Interactor.cpp:229|main|total time 89935183 ns.
 ok Finish evaluation!
 Interactor exit status: 0
 solution exit status: 0
