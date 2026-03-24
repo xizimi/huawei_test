@@ -4,6 +4,7 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+#include <climits>
 
 using namespace std;
 
@@ -13,6 +14,8 @@ const double PRINT_EPS = 5e-8;
 const double INF = 1e100;
 const double OUT_STEP = 1e-7;
 const double OUTPUT_MARGIN = 3e-5;
+const size_t LAZY_GENERAL_REGION_THRESHOLD = 4500;
+const size_t LAZY_GENERAL_MAX_PARTS_THRESHOLD = 85;
 
 struct Vec {
     double x, y;
@@ -534,8 +537,12 @@ double fastMinX, fastMaxX, fastMinY, fastMaxY;
 vector<ConvexRegion> generalRegions;
 vector<BoundarySegment> generalBoundarySegments;
 vector<vector<int> > generalRegionBuckets;
+vector<vector<int> > generalBoundaryBuckets;
+vector<int> generalBoundaryVisitStamp;
 bool generalUseBucketsForQuery;
+bool generalUseLazyBoundarySearch;
 int generalGridW, generalGridH;
+int generalBoundaryQueryStamp;
 double generalMinX, generalMaxX, generalMinY, generalMaxY;
 double generalCellW, generalCellH;
 
@@ -572,7 +579,8 @@ static void buildGeneralRegionBuckets() {
     double height = max(generalMaxY - generalMinY, 1e-6);
     int target = static_cast<int>(sqrt(static_cast<double>(generalRegions.size()) * 4.0));
     if (target < 4) target = 4;
-    if (target > 32) target = 32;
+    int gridCap = generalUseLazyBoundarySearch ? 64 : 32;
+    if (target > gridCap) target = gridCap;
 
     double scale = max(width, height);
     generalGridW = max(1, static_cast<int>(round(target * width / scale)));
@@ -614,6 +622,23 @@ static inline bool pointInsideBucketedGeneralRegionStrict(double x, double y) {
         }
     }
     return false;
+}
+
+static inline double gridCellBBoxDist2(int cellIndex, double x, double y) {
+    int cx = cellIndex % generalGridW;
+    int cy = cellIndex / generalGridW;
+    double minx = generalMinX + cx * generalCellW;
+    double miny = generalMinY + cy * generalCellH;
+    double maxx = (cx + 1 == generalGridW) ? generalMaxX : (minx + generalCellW);
+    double maxy = (cy + 1 == generalGridH) ? generalMaxY : (miny + generalCellH);
+
+    double dx = 0.0;
+    double dy = 0.0;
+    if (x < minx) dx = minx - x;
+    else if (x > maxx) dx = x - maxx;
+    if (y < miny) dy = miny - y;
+    else if (y > maxy) dy = y - maxy;
+    return dx * dx + dy * dy;
 }
 
 static inline double boundaryBBoxDist2(const BoundarySegment& seg, double x, double y) {
@@ -703,6 +728,44 @@ static void mergeGeneralBoundarySegments() {
     }
 }
 
+static void buildGeneralBoundaryBuckets() {
+    generalBoundaryBuckets.clear();
+    generalBoundaryVisitStamp.clear();
+    generalBoundaryQueryStamp = 1;
+    if (generalBoundarySegments.empty()) {
+        return;
+    }
+
+    generalBoundaryBuckets.assign(generalGridW * generalGridH, vector<int>());
+    for (size_t i = 0; i < generalBoundarySegments.size(); ++i) {
+        const BoundarySegment& seg = generalBoundarySegments[i];
+        int x0 = generalCellX(seg.minx - QUERY_EPS);
+        int x1 = generalCellX(seg.maxx + QUERY_EPS);
+        int y0 = generalCellY(seg.miny - QUERY_EPS);
+        int y1 = generalCellY(seg.maxy + QUERY_EPS);
+        for (int y = y0; y <= y1; ++y) {
+            for (int x = x0; x <= x1; ++x) {
+                generalBoundaryBuckets[y * generalGridW + x].push_back(static_cast<int>(i));
+            }
+        }
+    }
+    generalBoundaryVisitStamp.assign(generalBoundarySegments.size(), 0);
+}
+
+static void buildGeneralLazyBoundarySegments() {
+    generalBoundarySegments.clear();
+    size_t totalEdges = 0;
+    for (size_t i = 0; i < generalRegions.size(); ++i) {
+        totalEdges += generalRegions[i].edges.size();
+    }
+    generalBoundarySegments.reserve(totalEdges);
+    for (size_t i = 0; i < generalRegions.size(); ++i) {
+        for (size_t e = 0; e < generalRegions[i].edges.size(); ++e) {
+            generalBoundarySegments.push_back(makeBoundarySegment(generalRegions[i].edges[e].a, generalRegions[i].edges[e].b));
+        }
+    }
+}
+
 static void buildGeneralBoundarySegments() {
     generalBoundarySegments.clear();
 
@@ -770,6 +833,22 @@ static void buildGeneralBoundarySegments() {
     }
 }
 
+static void recomputeGeneralBounds() {
+    if (generalRegions.empty()) {
+        generalMinX = generalMaxX = generalMinY = generalMaxY = 0.0;
+        return;
+    }
+
+    generalMinX = generalMinY = INF;
+    generalMaxX = generalMaxY = -INF;
+    for (size_t i = 0; i < generalRegions.size(); ++i) {
+        if (generalRegions[i].minx < generalMinX) generalMinX = generalRegions[i].minx;
+        if (generalRegions[i].maxx > generalMaxX) generalMaxX = generalRegions[i].maxx;
+        if (generalRegions[i].miny < generalMinY) generalMinY = generalRegions[i].miny;
+        if (generalRegions[i].maxy > generalMaxY) generalMaxY = generalRegions[i].maxy;
+    }
+}
+
 static void preprocessConvexFastPath() {
     vector<Vec> negB(polyB.size());
     for (size_t i = 0; i < polyB.size(); ++i) {
@@ -818,6 +897,10 @@ static void preprocessGeneralPath() {
     vector<vector<Vec> > partsB = buildConvexParts(polyB);
 
     generalRegions.clear();
+    generalBoundarySegments.clear();
+    generalBoundaryBuckets.clear();
+    generalBoundaryVisitStamp.clear();
+    generalUseLazyBoundarySearch = false;
     for (size_t ia = 0; ia < partsA.size(); ++ia) {
         for (size_t ib = 0; ib < partsB.size(); ++ib) {
             vector<Vec> negPartB(partsB[ib].size());
@@ -830,6 +913,17 @@ static void preprocessGeneralPath() {
             }
             generalRegions.push_back(buildConvexRegion(sumPoly));
         }
+    }
+
+    size_t maxParts = max(partsA.size(), partsB.size());
+    if (maxParts >= LAZY_GENERAL_MAX_PARTS_THRESHOLD ||
+        generalRegions.size() >= LAZY_GENERAL_REGION_THRESHOLD) {
+        generalUseLazyBoundarySearch = true;
+        recomputeGeneralBounds();
+        buildGeneralRegionBuckets();
+        buildGeneralLazyBoundarySegments();
+        buildGeneralBoundaryBuckets();
+        return;
     }
 
     vector<char> removed(generalRegions.size(), 0);
@@ -859,22 +953,14 @@ static void preprocessGeneralPath() {
 
     vector<ConvexRegion> filtered;
     filtered.reserve(generalRegions.size());
-    generalMinX = generalMinY = INF;
-    generalMaxX = generalMaxY = -INF;
     for (size_t i = 0; i < generalRegions.size(); ++i) {
-        if (removed[i]) continue;
-        filtered.push_back(generalRegions[i]);
-        if (generalRegions[i].minx < generalMinX) generalMinX = generalRegions[i].minx;
-        if (generalRegions[i].maxx > generalMaxX) generalMaxX = generalRegions[i].maxx;
-        if (generalRegions[i].miny < generalMinY) generalMinY = generalRegions[i].miny;
-        if (generalRegions[i].maxy > generalMaxY) generalMaxY = generalRegions[i].maxy;
+        if (!removed[i]) {
+            filtered.push_back(generalRegions[i]);
+        }
     }
     generalRegions.swap(filtered);
 
-    if (generalRegions.empty()) {
-        generalMinX = generalMaxX = generalMinY = generalMaxY = 0.0;
-    }
-
+    recomputeGeneralBounds();
     buildGeneralRegionBuckets();
     buildGeneralBoundarySegments();
     mergeGeneralBoundarySegments();
@@ -925,7 +1011,146 @@ static inline bool pointInsideAnyGeneralRegionStrict(double x, double y) {
     return pointInsideBucketedGeneralRegionStrict(x, y);
 }
 
+static inline bool probeOutsideUnion(const Vec& p, const Vec& q) {
+    Vec diff = q - p;
+    double len2 = norm2(diff);
+    if (len2 <= GEOM_EPS) {
+        return false;
+    }
+    Vec probe = q + diff * (OUT_STEP / sqrt(len2));
+    return !pointInsideAnyGeneralRegionStrict(probe.x, probe.y);
+}
+
+static inline void solveGeneralLazy(double tx, double ty, double& outX, double& outY) {
+    if (generalRegions.empty() || generalBoundarySegments.empty() || outsideGeneralBBox(tx, ty)) {
+        outX = 0.0;
+        outY = 0.0;
+        return;
+    }
+
+    if (!pointInsideAnyGeneralRegionStrict(tx, ty)) {
+        outX = 0.0;
+        outY = 0.0;
+        return;
+    }
+
+    Vec p(tx, ty);
+    double bestDist2 = INF;
+    Vec bestVec(0.0, 0.0);
+
+    auto considerSegment = [&](const BoundarySegment& seg) {
+        if (boundaryBBoxDist2(seg, tx, ty) >= bestDist2 + GEOM_EPS) {
+            return;
+        }
+        Vec q = closestPointOnSegment(p, seg.seg);
+        Vec diff = q - p;
+        double dist2 = norm2(diff);
+        if (dist2 <= GEOM_EPS || dist2 + GEOM_EPS >= bestDist2) {
+            return;
+        }
+        if (!probeOutsideUnion(p, q)) {
+            return;
+        }
+        bestDist2 = dist2;
+        bestVec = diff;
+    };
+
+    if (generalBoundaryBuckets.empty()) {
+        for (size_t i = 0; i < generalBoundarySegments.size(); ++i) {
+            considerSegment(generalBoundarySegments[i]);
+        }
+    } else {
+        if (generalBoundaryQueryStamp == INT_MAX) {
+            fill(generalBoundaryVisitStamp.begin(), generalBoundaryVisitStamp.end(), 0);
+            generalBoundaryQueryStamp = 1;
+        }
+        int stamp = generalBoundaryQueryStamp++;
+
+        auto processCell = [&](int cx, int cy) {
+            if (cx < 0 || cx >= generalGridW || cy < 0 || cy >= generalGridH) {
+                return;
+            }
+            const vector<int>& bucket = generalBoundaryBuckets[cy * generalGridW + cx];
+            for (size_t j = 0; j < bucket.size(); ++j) {
+                int segIndex = bucket[j];
+                if (generalBoundaryVisitStamp[segIndex] == stamp) {
+                    continue;
+                }
+                generalBoundaryVisitStamp[segIndex] = stamp;
+                considerSegment(generalBoundarySegments[segIndex]);
+            }
+        };
+
+        auto ringMinDist2 = [&](int radius) {
+            double best = INF;
+            int x0 = generalCellX(tx);
+            int y0 = generalCellY(ty);
+            int minX = max(0, x0 - radius);
+            int maxX = min(generalGridW - 1, x0 + radius);
+            int minY = max(0, y0 - radius);
+            int maxY = min(generalGridH - 1, y0 + radius);
+            for (int x = minX; x <= maxX; ++x) {
+                best = min(best, gridCellBBoxDist2(minY * generalGridW + x, tx, ty));
+                if (maxY != minY) {
+                    best = min(best, gridCellBBoxDist2(maxY * generalGridW + x, tx, ty));
+                }
+            }
+            for (int y = minY + 1; y < maxY; ++y) {
+                best = min(best, gridCellBBoxDist2(y * generalGridW + minX, tx, ty));
+                if (maxX != minX) {
+                    best = min(best, gridCellBBoxDist2(y * generalGridW + maxX, tx, ty));
+                }
+            }
+            return best;
+        };
+
+        int x0 = generalCellX(tx);
+        int y0 = generalCellY(ty);
+        int maxRadius = max(max(x0, generalGridW - 1 - x0), max(y0, generalGridH - 1 - y0));
+
+        for (int radius = 0; radius <= maxRadius; ++radius) {
+            int minX = x0 - radius;
+            int maxX = x0 + radius;
+            int minY = y0 - radius;
+            int maxY = y0 + radius;
+
+            for (int x = minX; x <= maxX; ++x) {
+                processCell(x, minY);
+                if (maxY != minY) {
+                    processCell(x, maxY);
+                }
+            }
+            for (int y = minY + 1; y < maxY; ++y) {
+                processCell(minX, y);
+                if (maxX != minX) {
+                    processCell(maxX, y);
+                }
+            }
+
+            if (bestDist2 < INF / 2.0 && radius < maxRadius && ringMinDist2(radius + 1) >= bestDist2 + GEOM_EPS) {
+                break;
+            }
+        }
+    }
+
+    if (bestDist2 >= INF / 2.0) {
+        outX = 0.0;
+        outY = 0.0;
+        return;
+    }
+
+    if (fabs(bestVec.x) < PRINT_EPS) bestVec.x = 0.0;
+    if (fabs(bestVec.y) < PRINT_EPS) bestVec.y = 0.0;
+    outX = bestVec.x;
+    outY = bestVec.y;
+}
+
 static inline void solveGeneral(double tx, double ty, double& outX, double& outY) {
+    if (generalUseLazyBoundarySearch) {
+        solveGeneralLazy(tx, ty, outX, outY);
+        return;
+    }
+
     if (generalRegions.empty() || generalBoundarySegments.empty() || outsideGeneralBBox(tx, ty)) {
         outX = 0.0;
         outY = 0.0;
