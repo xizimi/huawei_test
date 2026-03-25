@@ -1265,7 +1265,8 @@ int main() {
     if (scanf("%31s", ok) != 1 || strcmp(ok, "OK") != 0) {
         return 0;
     }
-
+    printf("%d\n",m);
+    fflush(stdout);
     for (int i = 0; i < m; ++i) {
         double ansX, ansY;
         solveQuery(queries[i].x, queries[i].y, ansX, ansY);
